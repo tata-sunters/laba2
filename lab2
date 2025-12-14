@@ -1,0 +1,252 @@
+import pygame
+import math
+
+# Инициализация
+pygame.init()
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+clock = pygame.time.Clock()
+
+# ПАРАМЕТРЫ УПРАВЛЕНИЯ
+angle_x = 0.0  # вращение вокруг X (↑↓)
+angle_y = 0.0  # вращение вокруг Y (←→)
+scale = 1.0  # масштаб (+-)
+center_x, center_y = WIDTH // 2, HEIGHT // 2  # центр экрана
+
+# Глобальные переменные для данных
+points_3d = []  # 3D точки
+edges = []  # соединения между точками
+current_file = "42.fdf"  # имя файла для загрузки
+
+
+# ========== ПРОСТОЙ ПАРСИНГ ==========
+def parse_simple_fdf(file_path):
+    """
+    ПРОСТОЙ парсинг файла .fdf
+    Предполагает, что в файле ТОЛЬКО числа, разделенные пробелами
+    Каждая строка - строка карты высот
+    """
+    # Используем global КОРРЕКТНО - присваиваем значения
+    global points_3d, edges
+
+    # Сбрасываем данные перед загрузкой новых
+    points_3d = []
+    edges = []
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Читаем все строки и преобразуем в числа
+        height_map = []
+        for line in lines:
+            # Пропускаем пустые строки
+            if not line.strip():
+                continue
+
+            # Разбиваем строку на числа
+            row = [int(num_str) for num_str in line.strip().split()]
+
+            if row:  # Добавляем только непустые строки
+                height_map.append(row)
+
+        # Проверяем, что данные есть
+        if not height_map:
+            print("Файл пуст!")
+            return
+
+        # СОЗДАЕМ 3D ТОЧКИ из карты высот
+        rows = len(height_map)
+        cols = len(height_map[0])
+
+        print(f"Загружено: {rows} строк x {cols} столбцов")
+
+        # Преобразуем карту высот в 3D точки
+        for y in range(rows):
+            for x in range(cols):
+                # Центрируем координаты
+                world_x = x - cols / 2
+                world_y = y - rows / 2
+                height = height_map[y][x]
+
+                # Добавляем точку
+                points_3d.append([world_x, world_y, height])
+
+        # СОЗДАЕМ РЁБРА (соединения между точками)
+        # Горизонтальные соединения
+        for y in range(rows):
+            for x in range(cols - 1):
+                idx1 = y * cols + x
+                idx2 = y * cols + (x + 1)
+                edges.append((idx1, idx2))
+
+        # Вертикальные соединения
+        for x in range(cols):
+            for y in range(rows - 1):
+                idx1 = y * cols + x
+                idx2 = (y + 1) * cols + x
+                edges.append((idx1, idx2))
+
+        print(f"Создано {len(points_3d)} точек и {len(edges)} рёбер")
+
+    except FileNotFoundError:
+        print(f"Файл {file_path} не найден!")
+    except ValueError as e:
+        print(f"Ошибка в данных файла: {e}")
+
+
+# ========== МАТЕМАТИКА ==========
+def rotate_point(x, y, z, rot_angle_x, rot_angle_y):
+    """Вращает точку вокруг осей X и Y"""
+    # Вращение вокруг Y
+    x1 = x * math.cos(rot_angle_y) + z * math.sin(rot_angle_y)
+    z1 = -x * math.sin(rot_angle_y) + z * math.cos(rot_angle_y)
+
+    # Вращение вокруг X
+    y1 = y * math.cos(rot_angle_x) - z1 * math.sin(rot_angle_x)
+    z2 = y * math.sin(rot_angle_x) + z1 * math.cos(rot_angle_x)
+
+    return x1, y1, z2
+
+
+def project_to_2d(x, y, z):
+    """Проецирует 3D точку на 2D экран (простая проекция)"""
+    # Применяем масштаб
+    x_scaled = x * scale
+    y_scaled = y * scale
+    z_scaled = z * scale * 0.5  # немного сжимаем по Z
+
+    # Изометрическая проекция
+    screen_x = int(x_scaled - y_scaled + center_x)
+    screen_y = int(-z_scaled + (x_scaled + y_scaled) / 2 + center_y)
+
+    return screen_x, screen_y
+
+
+# ========== ОТРИСОВКА ==========
+def draw_wireframe():
+    """Рисует каркасную модель"""
+    # Преобразуем и рисуем все точки
+    projected_points = []
+    for point in points_3d:
+        # Вращаем точку
+        x_rot, y_rot, z_rot = rotate_point(point[0], point[1], point[2],
+                                           angle_x, angle_y)
+        # Проецируем на 2D
+        px, py = project_to_2d(x_rot, y_rot, z_rot)
+        projected_points.append((px, py))
+
+        # Рисуем точку
+        pygame.draw.circle(screen, (255, 200, 100), (px, py), 4)
+
+    # Рисуем ребра (линии между точками)
+    for edge in edges:
+        if edge[0] < len(projected_points) and edge[1] < len(projected_points):
+            p1 = projected_points[edge[0]]
+            p2 = projected_points[edge[1]]
+            pygame.draw.line(screen, (100, 200, 255), p1, p2, 2)
+
+
+def draw_info():
+    """Рисует информацию на экране"""
+    font = pygame.font.SysFont(None, 24)
+    info = [
+        f"Файл: {current_file}",
+        "УПРАВЛЕНИЕ:",
+        "← → : Вращение вокруг вертикальной оси (Y)",
+        "↑ ↓ : Вращение вокруг горизонтальной оси (X)",
+        "+ - : Масштабирование (увеличение/уменьшение)",
+        "ESC : Выход"
+    ]
+
+    for i, text in enumerate(info):
+        rendered = font.render(text, True, (240, 240, 255))
+        screen.blit(rendered, (10, 10 + i * 30))
+
+
+# ========== СОЗДАНИЕ ТЕСТОВОГО ФАЙЛА ==========
+def create_test_file():
+    """Создает тестовый файл .fdf"""
+    with open("карта.fdf", "w", encoding='utf-8') as f:
+        f.write("0 0 0 0 0\n")
+        f.write("0 5 10 5 0\n")
+        f.write("0 10 20 10 0\n")
+        f.write("0 5 10 5 0\n")
+        f.write("0 0 0 0 0\n")
+    print("Создан тестовый файл: карта.fdf")
+
+
+# ========== ГЛАВНЫЙ ЦИКЛ ==========
+print(f"Пытаюсь загрузить файл: {current_file}")
+
+# ПАРСИМ ФАЙЛ
+parse_simple_fdf(current_file)
+
+print("\nУправление:")
+print("← →   - вращение вокруг вертикальной оси (Y)")
+print("↑ ↓   - вращение вокруг горизонтальной оси (X)")
+print("+ -   - масштабирование")
+print("ESC   - выход")
+
+# Главный цикл
+running = True
+while running:
+    # Обработка событий
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    # УПРАВЛЕНИЕ - ВРАЩЕНИЕ В ДВУХ ПЛОСКОСТЯХ
+    keys = pygame.key.get_pressed()
+
+    # 1. ВРАЩЕНИЕ ВОКРУГ ОСИ Y (← →)
+    if keys[pygame.K_LEFT]:
+        angle_y -= 0.05  # вращаем влево
+    if keys[pygame.K_RIGHT]:
+        angle_y += 0.05  # вращаем вправо
+
+    # 2. ВРАЩЕНИЕ ВОКРУГ ОСИ X (↑ ↓)
+    if keys[pygame.K_UP]:
+        angle_x -= 0.05  # наклоняем вперед
+    if keys[pygame.K_DOWN]:
+        angle_x += 0.05  # наклоняем назад
+
+    # 3. МАСШТАБИРОВАНИЕ (+ -)
+    if keys[pygame.K_PLUS] or keys[pygame.K_EQUALS]:
+        scale *= 1.05  # увеличиваем
+    if keys[pygame.K_MINUS]:
+        scale *= 0.95  # уменьшаем
+
+    # 4. ВЫХОД (ESC)
+    if keys[pygame.K_ESCAPE]:
+        running = False
+
+    # Отрисовка
+    screen.fill((20, 20, 40))
+
+    if points_3d:
+        draw_wireframe()
+    else:
+        font = pygame.font.SysFont(None, 36)
+        error_text = font.render("НЕТ ДАННЫХ!", True, (255, 100, 100))
+        screen.blit(error_text, (WIDTH // 2 - 100, HEIGHT // 2 - 50))
+
+        # Предложение создать тестовый файл
+        small_font = pygame.font.SysFont(None, 24)
+        hint_text = small_font.render(
+            "Нажмите C чтобы создать тестовый файл",
+            True,
+            (200, 200, 100)
+        )
+        screen.blit(hint_text, (WIDTH // 2 - 200, HEIGHT // 2 + 10))
+
+        # Обработка создания файла
+        if keys[pygame.K_c]:
+            create_test_file()
+            parse_simple_fdf("карта.fdf")
+
+    draw_info()
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
